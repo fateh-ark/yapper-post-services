@@ -1,0 +1,79 @@
+name: yapper-post
+
+networks:
+  yapper-post-db-net:
+
+volumes:
+  mongo-primary-data:
+  mongo-secondary-data:
+
+x-mongo-common: &mongo-commons
+  command: |
+    bash -c "
+      mkdir -p /etc/mongo-keyfile && \
+      echo \"$$MONGO_KEYFILE_CONTENT\" > /etc/mongo-keyfile/keyfile.txt && \
+      chmod 600 /etc/mongo-keyfile/keyfile.txt && \
+      mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongo-keyfile/keyfile.txt
+    "
+  environment:
+    MONGO_INITDB_ROOT_USERNAME: admin
+    MONGO_INITDB_ROOT_PASSWORD: password
+    MONGO_KEYFILE_CONTENT: hdLOuo+4xI/DYT1nUuvlkr5kkBecaKybaGlAdHRSVIqJ47zsxNumDffgChmUvCR1ojid1YWn5G3Xrig51qlL4GoYlYUxJCHcRqaB6Cj3Dlq0XtoIsEsCNtDWwytN0BrJc2EvNKukKNywrqO/2tilhBX5Xy9n9wcgojgZodqC/9sbuZ4mVW5KAjmw92wNsxK1d4b/19GYTWSM71+WtSCV1GGDGzXXBfxOg+ikULVoMQUicpCGEf5S2RfVCSg/iPjKlfu/NQ9HyOPMDZy0Vl6efKHhjs7hwSoE9EOAJdqz8gsCB2s0LW4dZITLu3m6gub4L4pxmXX5cpicMspow8WA9igK17DkQZq2oX9YaZgXuHxqBBFrrEDhTqLWBbKtGjyHFy6VtxzEA/cM8B9CFmME6a0xkPCx0W4IW2H0PQ5p19avsEc9ycSxsVR8Taw1dUmTUGAh19oWn0K4tDcphI04VZy4nc+760tUTQ0yKJt/Q5UXqk6kshxBuwxSTifT9LZMChbLa8FodZZMqesXxCbXuF6ON2QiWpVhw4UpgX+NQpAmlAkIY4lrxUjytI14n1cIWpgHB7JgXXNeAkSNOl/YCTI+r9QpT3i0c1G3HKBt4nsifbeZQ5KOoJy4AJzp4ZdB52lTAYQ9MVuUk7j692OFvXv+03uixkgVYFzIjjcMcI6uML1D95A655N4OkwGR3DeQpOrIXR8+R5AsvVkogZ+ZvLTNJq/TEEi8JB6uTE8Fx8yAef9oCA/u9rRzIxA8QGyMIHPFbk3/Y53zEkP5I57EeWwoaGBNUrXjLKc/5t12wuJLBvQ5E4sJ+o4XTVTFrMAYTsrx3ftdST5sh+BL0A3ptbsJntr0hNvH1EiVeJ6pWPfbakZ8EJ2qSsvXPoV/ArHydX4zYgrAOZ1+9Cue26cu6L4gT4uLx45cP0QutHv1weaDuCbqDMfDu/5oXO/u1Nn5bLtLHOb4QvpWA4hukcsd87Mw7+Q
+  healthcheck:
+    test: ["CMD", "mongosh", "--eval", "db.adminCommand({ping: 1})"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+  networks:
+    - yapper-post-db-net
+
+services:
+  mongo-primary:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-primary-data:/data/db
+    <<: *mongo-commons
+
+  mongo-secondary:
+    image: mongo:latest
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo-secondary-data:/data/db
+    <<: *mongo-commons
+
+  # Arbiter node (does not store data, only votes in elections)
+  mongo-arbiter:
+    image: mongo:latest
+    ports:
+      - "27019:27017"
+    <<: *mongo-commons
+  
+   # This service will initiate the replica set
+  mongo-init-replica:
+    image: mongo:latest
+    container_name: mongo-init-replica
+    command: >
+      bash -c "
+        sleep 10 &&
+        mongo --host mongodb1:27017 <<EOF
+          var config = {
+            _id: 'rs0',
+            members: [
+              { _id: 0, host: 'mongo-primary:27017' },
+              { _id: 1, host: 'mongo-secondary:27017' },
+              { _id: 2, host: 'mongo-arbiter:27017', arbiterOnly: true } # Mark this member as an arbiter
+            ]
+          };
+          rs.initiate(config);
+          rs.status();
+        EOF
+      "
+    depends_on:
+      - mongo-primary
+      - mongo-secondary
+      - mongo-arbiter 
+    networks:
+      - yapper-post-db-net
