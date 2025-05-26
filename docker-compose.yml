@@ -58,13 +58,13 @@ services:
     command: >
       bash -c "
         sleep 10 &&
-        mongo --host mongodb1:27017 <<EOF
+        mongo --host mongo-primary:27017 <<EOF # Connect to mongo-primary to initiate
           var config = {
             _id: 'rs0',
             members: [
-              { _id: 0, host: 'mongo-primary:27017' },
-              { _id: 1, host: 'mongo-secondary:27017' },
-              { _id: 2, host: 'mongo-arbiter:27017', arbiterOnly: true } # Mark this member as an arbiter
+              { _id: 0, host: 'mongo-primary:27017', priority: 10 }, # Higher priority
+              { _id: 1, host: 'mongo-secondary:27017', priority: 5 }, # Lower priority
+              { _id: 2, host: 'mongo-arbiter:27017', arbiterOnly: true }
             ]
           };
           rs.initiate(config);
@@ -74,6 +74,21 @@ services:
     depends_on:
       - mongo-primary
       - mongo-secondary
-      - mongo-arbiter 
+      - mongo-arbiter
     networks:
       - yapper-post-db-net
+
+  writer-service:
+    build:
+      context: ./writer # Points to the directory containing the Dockerfile
+      dockerfile: Dockerfile    # Specifies the Dockerfile name
+    ports:
+      - "8080:8080" # Map container port 8080 to host port 8080
+    environment:
+      # These environment variables are picked up by main.go
+      MONGO_URI: "mongodb://mongo-primary:27017,mongo-secondary:27017,mongo-arbiter:27017/?replicaSet=rs0"
+      MONGO_DB_NAME: "mydb"
+    depends_on:
+      - mongo-primary
+    networks:
+      - yapper-post-db-net # Connect to the same network as MongoDB
